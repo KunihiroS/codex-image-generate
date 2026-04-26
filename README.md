@@ -1,8 +1,8 @@
 # codex-image-generate
 
-CLI helper for generating images via Codex/ChatGPT OAuth login using gpt-image-2.
+An AI agent skill for generating images via Codex/ChatGPT OAuth login using gpt-image-2.
 
-Reads a ChatGPT OAuth access token from `~/.codex/auth.json` (created by `codex login`) and calls the Codex Responses backend with the `image_generation` tool. No separate OpenAI API key or FAL key is required.
+This repository provides a `SKILL.md` for Claude Code and compatible AI agents, bundled with a helper script. Agents can use this skill to generate images through a local Codex/ChatGPT login without a separate OpenAI API key or FAL key.
 
 ## Disclaimer
 
