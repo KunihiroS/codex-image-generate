@@ -4,6 +4,12 @@ CLI helper for generating images via Codex/ChatGPT OAuth login using gpt-image-2
 
 Reads a ChatGPT OAuth access token from `~/.codex/auth.json` (created by `codex login`) and calls the Codex Responses backend with the `image_generation` tool. No separate OpenAI API key or FAL key is required.
 
+## Disclaimer
+
+This tool uses an internal Codex/ChatGPT backend endpoint and is not affiliated with or endorsed by OpenAI.
+
+Compliance with OpenAI's terms of service and usage policies is your own responsibility to verify. The author takes no responsibility for any consequences, including account suspension or unintended quota consumption.
+
 ## What it does
 
 - Reads a ChatGPT OAuth access token from `~/.codex/auth.json` by default.
