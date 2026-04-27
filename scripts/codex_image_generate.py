@@ -278,7 +278,10 @@ def parse_sse(data: str) -> tuple[list[str], dict[str, Any], int, int]:
         if events > MAX_SSE_EVENTS:
             raise UserFacingError("Codex image response exceeded 512 SSE event limit", EXIT_API_FAILURE)
         t = ev.get("type")
-        if t in ("response.failed", "error"):
+        if t == "error":
+            err = ev.get("error") if isinstance(ev.get("error"), dict) else {}
+            failure_message = err.get("message") or ev.get("message") or err.get("code") or "Codex image generation failed"
+        elif t == "response.failed" and not failure_message:
             err = ev.get("error") if isinstance(ev.get("error"), dict) else {}
             failure_message = err.get("message") or ev.get("message") or err.get("code") or "Codex image generation failed"
         if t == "response.completed" and isinstance(ev.get("response"), dict):
