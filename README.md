@@ -122,7 +122,18 @@ python3 scripts/codex_image_generate.py \
 3. `CODEX_AUTH_FILE` environment variable
 4. `~/.codex/auth.json`
 
-The script does not refresh tokens automatically. If auth fails, run:
+### One-time HTTP 401 auth-file reread
+
+- When auth comes from a file, the first HTTP 401 rereads the same resolved file once.
+- If its access token changed, the helper retries the identical generation request once with the newly read credentials (at most two HTTP attempts in total).
+- If the token is unchanged or the file cannot be read as valid auth, the helper keeps the original HTTP 401 error and exits.
+- A second HTTP 401 or any other HTTP error gets no further reread or retry.
+- `CODEX_ACCESS_TOKEN` environment auth never triggers a reread or retry.
+- A retry emits one non-secret line to stderr, without token or account values.
+
+This is a reread, not a token refresh. An external refresh owner is responsible for updating the auth file. The helper does not refresh tokens, launch the Codex CLI, call refresh endpoints, or write auth files.
+
+If auth still fails or looks stale, check login and log in again if needed:
 
 ```bash
 codex login status

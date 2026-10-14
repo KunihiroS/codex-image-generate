@@ -106,7 +106,18 @@ Use this priority order:
 3. `CODEX_AUTH_FILE` environment variable.
 4. `~/.codex/auth.json`.
 
-Do not implement refresh-token handling in the helper. If a request returns 401 or auth looks stale, tell the user to run `codex login status` and then `codex login` if needed.
+### One-time HTTP 401 auth-file reread
+
+- When auth comes from a file, the first HTTP 401 rereads the same resolved file once.
+- If its access token changed, retry the identical generation request once with the newly read credentials (at most two HTTP attempts in total).
+- If the token is unchanged or the file cannot be read as valid auth, preserve the original HTTP 401 error and exit.
+- A second HTTP 401 or any other HTTP error gets no further reread or retry.
+- `CODEX_ACCESS_TOKEN` environment auth never triggers a reread or retry.
+- Emit one non-secret line to stderr when retrying, without token or account values.
+
+This is a reread, not a token refresh. An external refresh owner is responsible for updating the auth file. Do not implement refresh-token handling, launch the Codex CLI, call refresh endpoints, or write auth files in the helper.
+
+If auth still fails or looks stale, tell the user to run `codex login status` and then `codex login` if needed.
 
 ## Robust error handling to preserve
 

@@ -55,9 +55,10 @@ EXIT_DECODE_OR_WRITE = 6
 
 
 class UserFacingError(Exception):
-    def __init__(self, message: str, exit_code: int = 1) -> None:
+    def __init__(self, message: str, exit_code: int = 1, http_status: int | None = None) -> None:
         super().__init__(message)
         self.exit_code = exit_code
+        self.http_status = http_status
 
 
 def eprint(message: str) -> None:
@@ -66,7 +67,15 @@ def eprint(message: str) -> None:
 
 def redact(text: str) -> str:
     # Conservative redaction for accidental bearer/token-like snippets in errors.
-    redacted = text
+    # Redact named credential values before masking their keys, including short
+    # account IDs or fake tokens that do not match the generic token patterns.
+    redacted = re.sub(
+        r"([\"']?(?:access_token|refresh_token|id_token|OPENAI_API_KEY|account_id)"
+        r"[\"']?\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;}]+)",
+        r"\1[REDACTED]",
+        text,
+        flags=re.I,
+    )
     for key in ("access_token", "refresh_token", "id_token", "OPENAI_API_KEY", "account_id"):
         redacted = redacted.replace(key, f"[{key.upper()}]")
     redacted = re.sub(r"Bearer\s+[A-Za-z0-9._\-]+", "Bearer [REDACTED]", redacted, flags=re.I)
@@ -107,7 +116,10 @@ def load_auth(args: argparse.Namespace) -> tuple[str, str | None, str]:
     if env_token:
         return env_token, os.environ.get("CODEX_ACCOUNT_ID"), "env:CODEX_ACCESS_TOKEN"
 
-    path = auth_file_from_args(args)
+    return load_auth_file(auth_file_from_args(args))
+
+
+def load_auth_file(path: Path, warn: bool = True) -> tuple[str, str | None, str]:
     if not path.exists():
         raise UserFacingError(
             f"Codex auth file not found: {path}\n"
@@ -119,8 +131,10 @@ def load_auth(args: argparse.Namespace) -> tuple[str, str | None, str]:
         auth = json.loads(path.read_text())
     except json.JSONDecodeError as exc:
         raise UserFacingError(f"Codex auth file is not valid JSON: {path}: {exc}", EXIT_AUTH)
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         raise UserFacingError(f"Could not read Codex auth file: {path}: {exc}", EXIT_AUTH)
+    if not isinstance(auth, dict):
+        raise UserFacingError(f"Codex auth file is not a JSON object: {path}", EXIT_AUTH)
 
     auth_mode = auth.get("auth_mode")
     tokens = auth.get("tokens")
@@ -139,7 +153,7 @@ def load_auth(args: argparse.Namespace) -> tuple[str, str | None, str]:
     if account_id is not None and not isinstance(account_id, str):
         account_id = None
     source = f"auth-file:{path}"
-    if auth_mode and auth_mode != "chatgpt":
+    if warn and auth_mode and auth_mode != "chatgpt":
         eprint(f"WARNING: auth_mode is {auth_mode!r}, expected 'chatgpt'. Continuing without printing secrets.")
     return token, account_id, source
 
@@ -249,7 +263,12 @@ def read_http_response(req: urllib.request.Request, timeout: int) -> tuple[int, 
                 chunks.append(chunk)
             return resp.status, resp.headers.get("content-type"), b"".join(chunks).decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
-        raise UserFacingError(http_error_message(exc), EXIT_HTTP)
+        message = http_error_message(exc)
+        token = req.get_header("Authorization", "").removeprefix("Bearer ")
+        for secret in (token, req.get_header("Chatgpt-account-id")):
+            if secret:
+                message = message.replace(secret, "[REDACTED]")
+        raise UserFacingError(message, EXIT_HTTP, http_status=exc.code)
     except TimeoutError as exc:
         raise UserFacingError(f"Request timed out after {timeout}s: {exc}", EXIT_HTTP)
     except urllib.error.URLError as exc:
@@ -344,9 +363,26 @@ def main() -> int:
             return 0
 
         prompt_path, output_path, prompt = validate_local_inputs(args)
+        auth_path = auth_file_from_args(args) if auth_source.startswith("auth-file:") else None
         req = build_request(args, prompt, token, account_id)
         started = time.time()
-        status, content_type, data = read_http_response(req, args.timeout)
+        try:
+            status, content_type, data = read_http_response(req, args.timeout)
+        except UserFacingError as exc:
+            if exc.http_status != 401 or auth_path is None:
+                raise
+            try:
+                new_token, new_account_id, _ = load_auth_file(auth_path, warn=False)
+            except (UserFacingError, OSError):
+                # Keep the original HTTP error when the external owner has not
+                # supplied readable, valid replacement credentials.
+                raise exc from None
+            if new_token == token:
+                raise
+            eprint("HTTP 401: auth file token changed; retrying request once.")
+            req = build_request(args, prompt, new_token, new_account_id)
+            # Deliberately outside another retry handler: two HTTP attempts max.
+            status, content_type, data = read_http_response(req, args.timeout)
         elapsed = time.time() - started
         images, api_metadata, event_count, parse_errors = parse_sse(data)
         if not images:
